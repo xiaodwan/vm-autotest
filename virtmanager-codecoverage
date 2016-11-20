@@ -1,0 +1,552 @@
+#!/usr/bin/bash
+
+###################################################
+# code coverage data directory
+VIRTMANAGER_CODECOV=/.virtmanager_codecoverage
+# nfs server
+SERVER_MNT_DIR="10.73.194.27:/vol/S3/libvirtmanual/xiaodwan"
+# virtmanager commands(virt-[manager|install|clone|xml]) alias setting script
+VIRTMANAGER_ALIAS=virtmanager-alias.sh
+# coverage commands alias setting file
+COVERAGE_ALIAS=coverage-alias.sh
+FULLPATH_VIRTMANAGER_ALIAS=/etc/profile.d/${VIRTMANAGER_ALIAS}
+FULLPATH_COVERAGE_ALIAS=/etc/profile.d/${COVERAGE_ALIAS}
+VIRTMANAGER_VERSION=$(basename `rpm -q virt-manager` '.noarch')
+# Enable code coverage when startup virt-manager by icon by default
+VIRTMANAGER_COVERAGE_ENABLE=0
+
+# CLEAR_FLAG
+CLEAR_FLAG=1
+CLEAR_CC_FLAG=1
+###################################################
+check_env()
+{
+    host_env=$(uname -r )
+    host_env=${host_env%.*}
+    host_env=${host_env##*.}
+
+    if [ ${host_env} != "el7" ]; then
+        echo "Error: Only RHEL7 is supported"
+        exit 1
+    fi
+
+    if ! [ $(which coverage) ]; then
+        echo "Error: No */bin/coverage found."
+        echo "Please make sure python-coverage is installed"
+        exit 1
+    fi
+}
+
+help()
+{
+    cat << EOF
+Usage: virtmanager-codecoverage {--setup|--submit|--help|--clean|--clear-cc-env}
+
+--setup:  setup virt-manager alias
+          Note: Must reboot your host to take effect!
+--submit: submit code coverage datas to nfs server
+--clean:  clean local coverage data before doing testing
+--clear-cc-env: clear code coverage env after finish all testing
+
+Example: 
+    1. # configure envrionment for the first run
+    virtmanager-coverage --setup
+    2. # Submit code coverage data
+    virtmanager-coverage --submit
+    3. # If there is old coverage data in dir /.virtmanager_codecoverage/, 
+    # run "virtmanager-codecoverage --clean" first before begin testing.
+    virtmanager-codecoverage --clean
+    4. # After finish testing, you can clean the code coverage env
+    virtmanager-codecoverage --clear-cc-env
+EOF
+}
+
+# internal only
+setup_code_coverage_env()
+{
+    # create collection data directory
+    if ! [ -d ${VIRTMANAGER_CODECOV} ]; then
+        #mkdir -p ${VIRTMANAGER_CODECOV}/${VIRTMANAGER_VERSION}
+        mkdir -p ${VIRTMANAGER_CODECOV}
+        # set to 777 as normal user can write data
+        #chmod -R 777 ${VIRTMANAGER_CODECOV}/${VIRTMANAGER_VERSION}
+        chmod -R 777 ${VIRTMANAGER_CODECOV}
+    fi 
+
+    if ! [ -f ${VIRTMANAGER_CODECOV}/setup.cfg ]; then 
+        # create coverage run configration file
+        cat << EOF > ${VIRTMANAGER_CODECOV}/setup.cfg
+[run]
+branch = True
+parallel = True
+data_file = ${VIRTMANAGER_CODECOV}/.virtmanager-coverage-${VIRTMANAGER_VERSION}
+EOF
+    fi
+
+    if ! [ -f ${VIRTMANAGER_CODECOV}/.version ]; then
+        echo $VIRTMANAGER_VERSION > ${VIRTMANAGER_CODECOV}/.version
+        echo  $VIRTMANAGER_VERSION > ${VIRTMANAGER_CODECOV}/.version_latest
+    fi
+}
+
+# Update virtmanager app icon startup command
+# This will also enable code coverage when startup virtmanager by
+# "Applications->System Tools->Virtual Machine Manager".
+update_virt_manager_app_icon_startup()
+{
+    if [ $VIRTMANAGER_COVERAGE_ENABLE -eq 0 ] && ! (grep -q "coverage run" /usr/share/applications/virt-manager.desktop); then
+        sed -i "s%Exec=virt-manager%Exec=coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-manager%" /usr/share/applications/virt-manager.desktop
+    fi
+}
+
+# create alias setup file /etc/profile.d/virtmanager-coverage-alias.sh
+setup_virtmanager_alias()
+{
+    if ! [ -d /etc/profile.d/ ]; then
+        echo -e "\033[31mError: /etc/profile.d does't exist!\033[0m\n"
+        exit 1
+    fi
+
+    if [ -f $FULLPATH_VIRTMANAGER_ALIAS ]; then
+        if (grep -q "alias virt-install=" $FULLPATH_VIRTMANAGER_ALIAS); then
+            :
+        else
+            echo "alias virt-install='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-install'" \
+            >> $FULLPATH_VIRTMANAGER_ALIAS 
+        fi
+
+        if (grep -q "alias virt-xml=" $FULLPATH_VIRTMANAGER_ALIAS); then
+            :
+        else
+            echo "alias virt-xml='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-xml'" \
+            >> $FULLPATH_VIRTMANAGER_ALIAS
+        fi
+
+        if (grep -q "alias virt-clone=" $FULLPATH_VIRTMANAGER_ALIAS); then
+            :
+        else
+            echo "alias virt-clone='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-clone'" \
+            >> $FULLPATH_VIRTMANAGER_ALIAS 
+        fi
+
+        if (grep -q "alias virt-manager=" $FULLPATH_VIRTMANAGER_ALIAS); then
+            :
+        else
+            echo "alias virt-manager='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-manager'" \
+            >> $FULLPATH_VIRTMANAGER_ALIAS 
+        fi
+    else
+        # create alias for virt-manager commands
+        cat << EOF > $FULLPATH_VIRTMANAGER_ALIAS
+#!/usr/bin/sh        
+
+alias virt-install='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-install'
+alias virt-clone='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-clone'
+alias virt-manager='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-manager'
+alias virt-xml='coverage run --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg /usr/share/virt-manager/virt-xml'
+EOF
+    fi
+
+    update_virt_manager_app_icon_startup
+
+    # echo -e "\033[31m 红色字 \033[0m"
+    echo -e "\033[32mSuccess\033[0m\n"
+    echo -e "Please reboot you system for configuration to take effect!\n" 
+}
+
+virt_manager_version_check()
+{
+    if ! [ -f ${VIRTMANAGER_CODECOV}/.version ]; then
+        echo  $VIRTMANAGER_VERSION > ${VIRTMANAGER_CODECOV}/.version
+    fi
+
+    echo  $VIRTMANAGER_VERSION > ${VIRTMANAGER_CODECOV}/.version_latest
+
+    if ! (diff ${VIRTMANAGER_CODECOV}/.version ${VIRTMANAGER_CODECOV}/.version_latest > /dev/null); then
+        cat << EOF > ${VIRTMANAGER_CODECOV}/setup.cfg
+[run]
+branch = True
+parallel = True
+data_file = ${VIRTMANAGER_CODECOV}/.virtmanager-coverage-${VIRTMANAGER_VERSION}
+EOF
+        echo  $VIRTMANAGER_VERSION > ${VIRTMANAGER_CODECOV}/.version
+    fi
+}
+
+setup_crontask()
+{
+    # check version every 10s
+    cat << EOF > /tmp/coverage_temp.txt
+* * * * * /usr/bin/virtmanager-codecoverage --version-check
+* * * * * sleep 10; /usr/bin/virtmanager-codecoverage --version-check
+* * * * * sleep 20; /usr/bin/virtmanager-codecoverage --version-check
+* * * * * sleep 30; /usr/bin/virtmanager-codecoverage --version-check
+* * * * * sleep 40; /usr/bin/virtmanager-codecoverage --version-check
+* * * * * sleep 50; /usr/bin/virtmanager-codecoverage --version-check
+EOF
+
+    crontab /tmp/coverage_temp.txt
+}
+
+# create alias setup file /etc/profile.d/virtmanager-coverage-alias.sh
+setup_coverage_alias()
+{
+    if ! [ -d /etc/profile.d/ ]; then
+        echo -e "\033[31mError: /etc/profile.d does't exist!\033[0m\n"
+        exit 1
+    fi
+
+    if [ -f $FULLPATH_COVERAGE_ALIAS ]; then
+        if (grep -q "alias coverage_combine=" $FULLPATH_COVERAGE_ALIAS); then
+            :
+        else
+            echo "alias coverage_combine='coverage combine --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg'" \
+            >> $FULLPATH_COVERAGE_ALIAS 
+        fi
+
+        if (grep -q "alias coverage_report=" $FULLPATH_COVERAGE_ALIAS); then
+            :
+        else
+            echo "alias coverage_report='coverage report --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg'" \
+            >> $FULLPATH_COVERAGE_ALIAS
+        fi
+
+        if (grep -q "alias coverage_html=" $FULLPATH_COVERAGE_ALIAS); then
+            :
+        else
+            echo "alias coverage_html='coverage html --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg'" \
+            >> $FULLPATH_COVERAGE_ALIAS 
+        fi
+    else
+        # create alias for coverage commands
+        cat << EOF > $FULLPATH_COVERAGE_ALIAS
+#!/usr/bin/sh        
+
+alias coverage_combine='coverage combine --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg'
+alias coverage_report='coverage report --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg'
+alias coverage_html='coverage html --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg'
+
+EOF
+
+    fi
+
+    # echo -e "\033[31m 红色字 \033[0m"
+    echo -e "\033[32mSuccess\033[0m\n"
+    echo "Please reboot you system for configuration to take effect!" 
+}
+
+mount_nfs_dir()
+{
+    # the nfs dir may has already been mounted
+    # will fix in future
+    mount $SERVER_MNT_DIR /mnt
+}
+
+unmount_nfs_dir()
+{
+    umount /mnt
+}
+
+clean_nfs_dir()
+{
+    mount_nfs_dir
+   
+    echo -n "Warning:Are you sure you want to delete all data files in NFS:(Y/N)"
+    read TMP_1
+
+    if [ x"$TMP_1" = x"Y" ] || [ x"$TMP_1" = x"y" ]; then  
+        rm -rf /mnt/cc_data/*
+    fi
+
+    unmount_nfs_dir
+}
+
+
+submit()
+{
+   mount_nfs_dir
+
+   # check if data exist in data_dir. if not, don't run tar
+   # need fix here
+   tar zcvf cc_data_${VIRTMANAGER_VERSION}_$(date -u +%Y%m%d%H%M%S)_${HOSTNAME}.tar.gz $VIRTMANAGER_CODECOV/.virtmanager-coverage-${VIRTMANAGER_VERSION}*
+
+   cp cc_data_${VIRTMANAGER_VERSION}* /mnt/cc_data/
+
+   if [ $? -ne 0 ]; then
+       echo "Error: some error occurs when copy data to nfs server"
+       unmount_nfs_dir
+       # exit so that cc_data_* files are not removed
+       exit 1
+   fi
+
+   unmount_nfs_dir
+
+   # clean temp tar.gz local file 
+   rm -f cc_data_${VIRTMANAGER_VERSION}_*.tar.gz
+}
+
+# clean coverage data
+clean_data_dir()
+{
+    INVALID=1
+    while [ $INVALID -ne 0 ]; 
+    do
+        echo -n "Warning: Are you sure you want to delete all data files?(Y/N):"
+        read TMP_INPUT
+        case $TMP_INPUT in
+            Y|y)
+                CLEAR_FLAG=0
+                INVALID=0
+                ;;
+            N|n)
+                CLEAR_FLAG=1
+                INVALID=0
+                ;;
+            *)
+                CLEAR_FLAG=1
+                INVALID=1
+                ;;
+        esac
+    done
+
+    if [ $CLEAR_FLAG -eq 0 ]; then
+        rm -rf $VIRTMANAGER_CODECOV/.virtmanager-coverage*
+    fi
+}
+
+force_clean_data_dir()
+{
+    rm -rf $VIRTMANAGER_CODECOV/.virtmanager-coverage*
+}
+
+pulldata()
+{
+    mount_nfs_dir
+
+    mkdir -p $VIRTMANAGER_CODECOV/${VIRTMANAGER_VERSION}
+    # test if there are coveraga data in nfs server
+    ls /mnt/cc_data/cc_data_${VIRTMANAGER_VERSION}*.tar.gz > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        cp /mnt/cc_data/cc_data_${VIRTMANAGER_VERSION}*.tar.gz $VIRTMANAGER_CODECOV/${VIRTMANAGER_VERSION}
+
+        if [ $? -ne 0 ]; then
+            echo "Error: some error occurs when copy data from nfs server"
+        fi
+    else
+        echo "No coverage data in NFS server"
+    fi
+
+    unmount_nfs_dir
+
+}
+
+# Get cc data files from nfs server and clean nfs after success
+pulldata_clean()
+{
+    mount_nfs_dir
+
+    mkdir -p $VIRTMANAGER_CODECOV/${VIRTMANAGER_VERSION}
+    # test if there are coveraga data in nfs server
+    ls /mnt/cc_data/cc_data_${VIRTMANAGER_VERSION}*.tar.gz > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        cp /mnt/cc_data/cc_data_${VIRTMANAGER_VERSION}*.tar.gz $VIRTMANAGER_CODECOV/${VIRTMANAGER_VERSION}
+
+        if [ $? -ne 0 ]; then
+            echo "Error: some error occurs when copy data from nfs server"
+            unmount_nfs_dir
+            # exit so that cc_data_* files are not removed
+            exit 1
+        fi
+
+        # clean tar.gz files from nfs server
+        rm -f /mnt/cc_data/cc_data_${VIRTMANAGER_VERSION}_*.tar.gz
+    else
+        echo "No coverage data in NFS server"
+    fi
+
+    unmount_nfs_dir
+
+}
+
+untar_cc_data_files()
+{
+
+   for tarfiles in $(ls $VIRTMANAGER_CODECOV/${VIRTMANAGER_VERSION}/*.tar.gz);
+   do
+       (tar zxvf $tarfiles -C /)
+   done
+
+}
+
+report()
+{
+    coverage combine --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg
+    coverage html --rcfile=${VIRTMANAGER_CODECOV}/setup.cfg
+}
+
+pull_untar_report()
+{
+    pulldata
+
+    untar_cc_data_files
+
+    report
+}
+
+untar_report()
+{
+    untar_cc_data_files
+    report
+}
+
+clear_code_coverage_env()
+{
+    INVALID=1
+    while [ $INVALID -ne 0 ]; 
+    do
+        echo -n "Warning: Are you sure you want to clean code coverage env?(Y/N):"
+        read TMP_INPUT
+        case $TMP_INPUT in
+            Y|y)
+                CLEAR_CC_FLAG=0
+                INVALID=0
+                ;;
+            N|n)
+                CLEAR_CC_FLAG=1
+                INVALID=0
+                ;;
+            *)
+                CLEAR_CC_FLAG=1
+                INVALID=1
+                ;;
+        esac
+    done
+
+    # clean up crontab task
+    crontab -r
+
+    if [ $CLEAR_CC_FLAG -eq 0 ]; then
+        if [ -f $FULLPATH_VIRTMANAGER_ALIAS ]; then
+            rm -fv $FULLPATH_VIRTMANAGER_ALIAS 
+        fi
+
+        if [ -f $FULLPATH_COVERAGE_ALIAS ]; then
+            rm -fv $FULLPATH_COVERAGE_ALIAS 
+        fi
+
+        if [ -d $VIRTMANAGER_CODECOV ]; then
+            rm -rfv $VIRTMANAGER_CODECOV
+        fi
+    fi
+    
+    # clean up virt-manager icon startup command
+    if grep -q "coverage run" /usr/share/applications/virt-manager.desktop; then
+        sed -i "s%Exec=.*$%Exec=virt-manager%" /usr/share/applications/virt-manager.desktop
+    fi
+
+    # remove virtmanager-codecoverage script
+    rm -fv /usr/bin/virtmanager-codecoverage
+
+    echo -e "\033[32mSuccess: Please reboot your host to take effect\033[0m\n"
+}
+
+list_all_options()
+{
+    cat << EOF
+--clean                   clean local coverage datas
+--clean-nfs               clean coverage datas in nfs
+--clear-cc-env            clear code coverage setting
+--help | -h               help
+--list | -l               list all options
+--pulldata                get coverage data from nfs server
+--pull-report             pull, untar and generate html report
+--report                  combine local coverage data and generate html report
+--setup                   setup virt-manager commands alias env
+--setup-all               setup virt-manager and coverage commands alias env
+--setup-coverage          setup coverage commands alias env
+--submit                  submit local code coverage data to nfs and clear local coverage data
+--submit-without-clean    submit local coverage data to nfs but without clear local data
+--untar                   untar local coverage data *.tar.gz
+--untar-report            untar local coverage data *.tar.gz and generate html report
+EOF
+}
+
+if [ $# -eq 1 ]; then
+    # check host version and coverage package
+    check_env
+    
+    # need to run with 'root' user
+    if [ $(whoami) != 'root' ]; then    
+        echo "Error: Must run with 'root' user!"
+        exit 1
+    fi
+
+    setup_code_coverage_env
+
+    case $1 in
+        --setup)
+              # copy script to /usr/bin
+              curdir=$(pwd)
+              cp -f $curdir/virtmanager-codecoverage /usr/bin/
+              setup_virtmanager_alias
+              # setup cron task to check version change every 10s
+              setup_crontask
+              ;;
+        --submit)
+              submit
+              force_clean_data_dir
+              ;;
+        --clean)
+              clean_data_dir
+              ;;
+        # below options are internal, for maintainer only
+        --setup-all)
+              setup_virtmanager_alias
+              setup_coverage_alias
+              ;;
+        --setup-coverage)
+              setup_coverage_alias
+              ;;
+        --submit-without-clean)
+              submit
+              ;;
+        --pulldata)
+              pulldata 
+              ;;
+        --report)
+              report
+              ;;
+        --untar)
+              untar_cc_data_files
+              ;;
+        --untar-report)
+              untar_report
+              ;;
+        --pull-report)
+              pull_untar_report
+              ;;
+        --clean-nfs)
+              clean_nfs_dir
+              ;;
+        --clear-cc-env)
+              clear_code_coverage_env
+              ;;
+        --help | -h)
+              help
+              ;;
+        --list | -l)
+              list_all_options
+              ;;
+        --version-check)
+              virt_manager_version_check
+              ;;
+        *)
+              echo -e "\033[31mError: Wrong arguments\033[0m\n"
+              help
+              ;;
+    esac
+else
+    echo -e "\033[31mError: Wrong usage!\033[0m\n"
+    help
+fi
+
