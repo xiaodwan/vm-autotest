@@ -2,9 +2,10 @@
 
 ###################################################
 # code coverage data directory
+NFS_SERVER="x.x.x.x"
 VIRTMANAGER_CODECOV=/.virtmanager_codecoverage
 # nfs server
-SERVER_MNT_DIR="10.73.194.27:/vol/S3/libvirtmanual/xiaodwan"
+SERVER_MNT_DIR="$NFS_SERVER:/vol/S3/libvirtmanual/xiaodwan"
 # virtmanager commands(virt-[manager|install|clone|xml]) alias setting script
 VIRTMANAGER_ALIAS=virtmanager-alias.sh
 # coverage commands alias setting file
