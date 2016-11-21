@@ -10,7 +10,7 @@ fi
 # recover the env
 case $1 in
     --recover)
-	    cp -f .qemu.conf /etc/libvirt/qemu.conf .qemu.conf
+	    cp -f .qemu.conf /etc/libvirt/qemu.conf
         service libvirtd restart
         if [ $? -eq 0 ]; then
             exit 0
