@@ -1,0 +1,79 @@
+
+# virsh bash completion start
+__get_vm()
+{
+    vmlist=""
+    for i in `virsh list --all | tail -n +3 | awk '{print $2}'`; 
+    do 
+        vmlist="$i $vmlist"; 
+    done
+    echo $vmlist
+}
+
+__get_active_vm()
+{
+    vmlist=""
+    for i in `virsh list | tail -n +3 | awk '{print $2}'`; 
+    do 
+        vmlist="$i $vmlist"; 
+    done
+    echo $vmlist
+}
+
+__get_inactive_vm()
+{
+    vmlist=""
+    for i in `virsh list --inactive | tail -n +3 | awk '{print $2}'`; 
+    do 
+        vmlist="$i $vmlist"; 
+    done
+    echo $vmlist
+}
+
+_vm_completion()
+{    
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts=$(__get_vm)
+    activevms=""
+    inactivevms=""
+
+    case "${cur}" in
+        s*)
+            COMPREPLY=( $(compgen -W "start" -- ${cur}) )
+            return 0
+            ;;
+        d*)
+            COMPREPLY=( $(compgen -W "destroy" -- ${cur}) )
+            return 0
+            ;;
+        e*)
+            COMPREPLY=( $(compgen -W "edit" -- ${cur}) )
+            return 0
+            ;;
+        *)
+            case "${prev}" in
+            destroy)
+                activevms=$(__get_active_vm)
+                COMPREPLY=( $(compgen -W "${activevms}" -- ${cur}) )
+                return 0
+                ;;
+            start)
+                inactivevms=$(__get_inactive_vm)
+                COMPREPLY=( $(compgen -W "${inactivevms}" -- ${cur}) )
+                return 0
+                ;;
+            esac
+
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            ;;
+    esac
+
+    return 0
+
+}
+complete -F _vm_completion virsh 
+# virsh bash completion end
+
