@@ -40,13 +40,31 @@ _vm_completion()
     activevms=""
     inactivevms=""
 
+    case "${prev}" in
+    destroy)
+        activevms=$(__get_active_vm)
+        COMPREPLY=( $(compgen -W "${activevms}" -- ${cur}) )
+        return 0
+        ;;
+    start)
+        inactivevms=$(__get_inactive_vm)
+        COMPREPLY=( $(compgen -W "${inactivevms}" -- ${cur}) )
+        return 0
+        ;;
+    edit | dumpxml)
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+	    return 0
+        ;;
+    esac
+
+
     case "${cur}" in
         s*)
             COMPREPLY=( $(compgen -W "start" -- ${cur}) )
             return 0
             ;;
         d*)
-            COMPREPLY=( $(compgen -W "destroy" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "destroy dumpxml" -- ${cur}) )
             return 0
             ;;
         e*)
@@ -54,19 +72,6 @@ _vm_completion()
             return 0
             ;;
         *)
-            case "${prev}" in
-            destroy)
-                activevms=$(__get_active_vm)
-                COMPREPLY=( $(compgen -W "${activevms}" -- ${cur}) )
-                return 0
-                ;;
-            start)
-                inactivevms=$(__get_inactive_vm)
-                COMPREPLY=( $(compgen -W "${inactivevms}" -- ${cur}) )
-                return 0
-                ;;
-            esac
-
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             ;;
     esac
