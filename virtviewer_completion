@@ -1,0 +1,74 @@
+
+# virsh bash completion start
+__get_vm()
+{
+    vmlist=""
+    for i in `virsh list --all | tail -n +3 | awk '{print $2}'`; 
+    do 
+        vmlist="$i $vmlist"; 
+    done
+    echo $vmlist
+}
+
+__get_active_vm()
+{
+    vmlist=""
+    for i in `virsh list | tail -n +3 | awk '{print $2}'`; 
+    do 
+        vmlist="$i $vmlist"; 
+    done
+    echo $vmlist
+}
+
+__get_inactive_vm()
+{
+    vmlist=""
+    for i in `virsh list --inactive | tail -n +3 | awk '{print $2}'`; 
+    do 
+        vmlist="$i $vmlist"; 
+    done
+    echo $vmlist
+}
+
+_virt_viewer_vm_completion()
+{    
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts=$(__get_vm)
+    activevms=""
+    inactivevms=""
+
+    case "${prev}" in
+     -c | --connect)
+        COMPREPLY=( $(compgen -W "qemu:///system" -- ${cur}) )
+        return 0
+        ;;
+    ///system)
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        return 0
+        ;;
+    esac
+
+    case "${cur}" in
+        qemu*)
+             COMPREPLY=( $(compgen -W "qemu:///system" -- ${cur}) )
+             return 0
+            ;;
+        *)
+            if [ "$(whoami)" != "root" ]; then
+                COMPREPLY=( $(compgen -W "-c" -- ${cur}) )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            ;;
+    esac
+
+    return 0
+
+}
+
+complete -F _virt_viewer_vm_completion virt-viewer
+# virsh bash completion end
+
